@@ -101,12 +101,13 @@ async function run() {
     await client.connect();
     console.log('DB connected');
 
-    const db = client.db('Esp32data3');
+    const db = client.db('Esp32data');
 
     // --- কালেকশন ডিফাইন করা ---
     // !! জরুরি: সেরা পারফরম্যান্সের জন্য esp_timeseries_data নামে একটি Time Series কালেকশন তৈরি করুন
     // এটি সাধারণ কালেকশনের চেয়ে অনেক দ্রুত এবং কম জায়গা নেবে।
-    const EspCollection = db.collection('esp_timeseries_data4'); // অথবা আপনার পুরানো 'espdata2'
+    //const EspCollection = db.collection('esp_timeseries_data4'); // অথবা আপনার পুরানো 'espdata2'
+    const EspCollection = db.collection('espdata2'); // অথবা আপনার পুরানো 'espdata2'
     
   const wholesaleCollection = db.collection('wholesale');
   const lotary = db.collection('lotary');
