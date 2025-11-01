@@ -144,7 +144,7 @@ async function run() {
         espDataBuffer.push(data);
 
         // ক্লায়েন্টকে (ESP32) দ্রুত রেসপন্স পাঠানো (202 Accepted)
-        res.status(202).send({ message: 'Data accepted and queued.' });
+        res.status(200).send({ message: 'Data accepted and queued.' });
       } catch (error) {
         res.status(400).send({ message: 'Invalid data format' });
       }
