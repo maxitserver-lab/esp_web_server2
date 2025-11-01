@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Max IT - API Test Panel</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Socket.io Client -->
+    <script src="https://cdn.socket.io/4.7.0/socket.io.min.js"></script>
+    <style>
+        /* Custom scrollbar for dark mode */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937; /* gray-800 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563; /* gray-600 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280; /* gray-500 */
+        }
+        .api-section {
+            display: none;
+        }
+        .api-section.active {
+            display: block;
+        }
+        /* Added for modal */
+        .modal-content {
+            background-color: #1f2937; /* gray-800 */
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans antialiased">
+
+    <!-- Main Container -->
+    <div class="flex md:flex-row flex-col min-h-screen">
+
+        <!-- Sidebar -->
+        <aside class="md:w-1/4 bg-gray-800 p-6 shadow-lg md:sticky md:top-0 md:h-screen overflow-y-auto">
+            <h1 class="text-2xl font-bold text-white mb-6">API টেস্ট প্যানেল</h1>
+            
+            <!-- Global Settings -->
+            <div class="space-y-4 mb-8">
+                <div>
+                    <label for="serverUrl" class="block text-sm font-medium text-gray-400 mb-1">Server URL</label>
+                    <input type="text" id="serverUrl" value="http://localhost:3000" class="w-full p-2 bg-gray-700 rounded border border-gray-600 focus:border-blue-500 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label for="apiKey" class="block text-sm font-medium text-gray-400 mb-1">Device API Key</label>
+                    <input type="password" id="apiKey" placeholder="x-api-key..." class="w-full p-2 bg-gray-700 rounded border border-gray-600 focus:border-blue-500 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label for="jwtToken" class="block text-sm font-medium text-gray-400 mb-1">JWT Token (Auto-filled on Login)</label>
+                    <textarea id="jwtToken" rows="4" class="w-full p-2 bg-gray-700 rounded border border-gray-600 resize-none" readonly></textarea>
+                </div>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="space-y-2">
+                <button onclick="showSection('device')" class="nav-button w-full text-left p-3 rounded bg-gray-700 hover:bg-blue-600 font-medium">1. Device API (Hardware)</button>
+                <button onclick="showSection('user')" class="nav-button w-full text-left p-3 rounded bg-gray-700 hover:bg-blue-600 font-medium">2. User API (App)</button>
+                <button onclick="showSection('admin')" class="nav-button w-full text-left p-3 rounded bg-gray-700 hover:bg-blue-600 font-medium">3. Admin API (Panel)</button>
+                <button onclick="showSection('socket')" class="nav-button w-full text-left p-3 rounded bg-gray-700 hover:bg-blue-600 font-medium">4. Socket.io (Real-time)</button>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="md:w-3/4 p-6 md:p-10">
+            
+            <!-- Device API Section -->
+            <div id="device-section" class="api-section active space-y-6">
+                <h2 class="text-3xl font-bold text-white mb-4">1. Device API (Hardware)</h2>
+                
+                <!-- 1. Register Device -->
+                <form id="form-device-register" class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">1. Register Device</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>POST /api/device/register</code></p>
+                    <label for="reg-uid" class="block text-sm font-medium mb-1">Device UID</label>
+                    <input type="text" id="reg-uid" placeholder="14:2B:2F:DA:F4:C8" class="w-full p-2 bg-gray-700 rounded border border-gray-600 mb-4">
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold p-2 rounded">Register Device</button>
+                </form>
+
+                <!-- 2. Send Device Data -->
+                <form id="form-device-data" class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">2. Send Device Data</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>POST /api/device/data</code></p>
+                    <div class="grid md:grid-cols-2 gap-4">
+                        <input type="text" id="data-uid" placeholder="Device UID" class="p-2 bg-gray-700 rounded border border-gray-600">
+                        <input type="number" step="0.01" id="data-temp" placeholder="Temperature (e.g., 31.37)" class="p-2 bg-gray-700 rounded border border-gray-600">
+                        <input type="number" step="0.01" id="data-water" placeholder="Water Level (e.g., 25.26)" class="p-2 bg-gray-700 rounded border border-gray-600">
+                        <input type="number" step="0.01" id="data-rain" placeholder="Rainfall (e.g., 0.01)" class="p-2 bg-gray-700 rounded border border-gray-600">
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold p-2 rounded mt-4">Send Data</button>
+                </form>
+            </div>
+
+            <!-- User API Section -->
+            <div id="user-section" class="api-section space-y-6">
+                <h2 class="text-3xl font-bold text-white mb-4">2. User API (Web/Mobile App)</h2>
+                
+                <!-- NEW DEBUGGING SECTION -->
+                <div class="bg-red-800 p-6 rounded-lg shadow-md border-2 border-red-500">
+                    <h3 class="text-xl font-semibold mb-3 text-white">!! ডিবাগিং টেস্ট (Debugging Test) !!</h3>
+                    <p class="text-sm text-red-200 mb-4">আপনি যদি 404 এরর পান, তাহলে প্রথমে "Test Admin Route" বাটনে ক্লিক করুন। যদি এটিও 404 দেখায়, তার মানে আপনার সার্ভার ফাইলটি পুরানো। দয়া করে ক্যানভাস থেকে `max-it-server.js` এর কোডটি কপি করে সেভ করুন এবং সার্ভার রিস্টার্ট করুন।</p>
+                    <button id="btn-debug-test" class="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-bold p-2 rounded">Test Admin Route (DEBUG)</button>
+                </div>
+                <!-- END NEW DEBUGGING SECTION -->
+                
+                <!-- 4. Register New User -->
+                <form id="form-user-register" class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">4. Register New User</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>POST /api/user/register</code></p>
+                    <div class="space-y-4">
+                        <input type="text" id="reg-name" placeholder="Name (e.g., Mr. Max)" class="w-full p-2 bg-gray-700 rounded border border-gray-600">
+                        <input type="email" id="reg-email" placeholder="Email (e.g., max@example.com)" class="w-full p-2 bg-gray-700 rounded border border-gray-600">
+                        <input type="password" id="reg-password" placeholder="Password" class="w-full p-2 bg-gray-700 rounded border border-gray-600">
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold p-2 rounded mt-4">Register</button>
+                </form>
+
+                <!-- 5. User Login -->
+                <form id="form-user-login" class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">5. User Login</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>POST /api/user/login</code></p>
+                    <div class="space-y-4">
+                        <input type="email" id="login-email" placeholder="Email" class="w-full p-2 bg-gray-700 rounded border border-gray-600">
+                        <input type="password" id="login-password" placeholder="Password" class="w-full p-2 bg-gray-700 rounded border border-gray-600">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-2 rounded mt-4">Login & Get JWT</button>
+                </form>
+
+                <!-- 6. Add Device to User Account -->
+                <form id="form-device-add" class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">6. Add Device to User Account (JWT Required)</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>POST /api/user/device/add</code></p>
+                    <input type="text" id="add-uid" placeholder="Device UID to add" class="w-full p-2 bg-gray-700 rounded border border-gray-600 mb-4">
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold p-2 rounded">Add Device</button>
+                </form>
+
+                <!-- 7. Remove Device -->
+                <form id="form-device-remove" class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">7. Remove Device (JWT Required)</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>DELETE /api/user/device/remove</code></p>
+                    <input type="text" id="remove-uid" placeholder="Device UID to remove" class="w-full p-2 bg-gray-700 rounded border border-gray-600 mb-4">
+                    <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold p-2 rounded">Remove Device</button>
+                </form>
+
+                <!-- 8. List User's Devices -->
+                <div class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">8. List User's Devices (JWT Required)</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>GET /api/user/devices</code></p>
+                    <button id="btn-user-devices" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-2 rounded">Get My Devices</button>
+                </div>
+
+                <!-- 9. Get Data for a Specific Device -->
+                <form id="form-device-history" class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">9. Get Data for Specific Device (JWT Required)</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>GET /api/user/device/:uid/data</code></p>
+                    <div class="space-y-4">
+                        <input type="text" id="history-uid" placeholder="Device UID" class="w-full p-2 bg-gray-700 rounded border border-gray-600">
+                        <input type="date" id="history-start" class="w-full p-2 bg-gray-700 rounded border border-gray-600 text-gray-400">
+                        <input type="date" id="history-end" class="w-full p-2 bg-gray-700 rounded border border-gray-600 text-gray-400">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-2 rounded mt-4">Get Device Data</button>
+                </form>
+            </div>
+
+            <!-- Admin API Section -->
+            <div id="admin-section" class="api-section space-y-6">
+                <h2 class="text-3xl font-bold text-white mb-4">3. Admin API (Admin JWT Required)</h2>
+
+                <!-- 10. List All Devices & Owners -->
+                <div class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">10. List All Devices & Owners</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>GET /api/admin/devices</code></p>
+                    <button id="btn-admin-devices" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-2 rounded">Get All Devices</button>
+                </div>
+
+                <!-- 11. Get Monthly Data Report -->
+                <form id="form-admin-report" class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">11. Get Monthly Data Report</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>GET /api/admin/report</code></p>
+                    <input type="number" id="report-year" placeholder="Year (e.g., 2025)" class="w-full p-2 bg-gray-700 rounded border border-gray-600 mb-4">
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-2 rounded">Generate Report</button>
+                </form>
+
+                <!-- 12. Get Server-Wide Statistics -->
+                <div class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold mb-3">12. Get Server-Wide Statistics</h3>
+                    <p class="text-sm text-gray-400 mb-4"><code>GET /api/admin/stats</code></p>
+                    <button id="btn-admin-stats" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-2 rounded">Get Server Stats</button>
+                </div>
+            </div>
+
+            <!-- Socket.io Section -->
+            <div id="socket-section" class="api-section space-y-6">
+                <h2 class="text-3xl font-bold text-white mb-4">4. Socket.io (Real-time)</h2>
+                <div class="bg-gray-800 p-6 rounded-lg shadow-md">
+                    <button id="btn-socket-connect" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold p-2 rounded mb-4">Connect to Socket.io</button>
+                    <h3 class="text-xl font-semibold mb-3">Socket Log</h3>
+                    <div id="socket-log" class="w-full h-64 bg-black p-4 rounded-lg overflow-y-auto font-mono text-sm">
+                        Waiting to connect...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Response Area (REMOVED) -->
+            
+        </main>
+    </div>
+
+    <!-- Modal Popup -->
+    <div id="responseModal" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 hidden">
+        <div class="modal-content rounded-lg shadow-xl w-11/12 md:w-2/3 max-h-[80vh] flex flex-col">
+            <!-- Modal Header -->
+            <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                <h2 id="modalTitle" class="text-xl font-bold text-white">API Response</h2>
+                <button id="closeModal" class="text-gray-400 hover:text-white text-3xl font-bold">&times;</button>
+            </div>
+            <!-- Modal Body -->
+            <div class="p-6 overflow-y-auto">
+                <pre><code id="modalResponseOutput" class="language-json text-sm">...</code></pre>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        let jwtToken = null;
+        let socket = null;
+
+        // --- Modal Elements ---
+        const responseModal = document.getElementById('responseModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalResponseOutput = document.getElementById('modalResponseOutput');
+        const closeModal = document.getElementById('closeModal');
+
+        // --- Navigation ---
+        function showSection(sectionId) {
+            document.querySelectorAll('.api-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            document.getElementById(sectionId + '-section').classList.add('active');
+        }
+
+        // --- Response Display (MODIFIED) ---
+        function displayResponse(data, status) {
+            const formattedJson = JSON.stringify(data, null, 2);
+            
+            // Set Title based on status
+            if (status >= 200 && status < 300) {
+                modalTitle.className = "text-xl font-bold text-green-400";
+                modalTitle.textContent = `Success (Status: ${status})`;
+            } else {
+                modalTitle.className = "text-xl font-bold text-red-400";
+                modalTitle.textContent = `Error (Status: ${status})`;
+            }
+
+            modalResponseOutput.textContent = formattedJson;
+            // Basic syntax highlighting
+            modalResponseOutput.innerHTML = modalResponseOutput.innerHTML
+                .replace(/"([^"]+)":/g, '<span class="text-pink-400">"$1"</span>:')
+                .replace(/: "([^"]*)"/g, ': <span class="text-green-400">"$1"</span>')
+                .replace(/: (\d+|true|false|null)/g, ': <span class="text-blue-400">$1</span>');
+            
+            // Show the modal
+            responseModal.classList.remove('hidden');
+        }
+
+        // --- Core API Request Handler ---
+        async function handleRequest(endpoint, method, body = null) {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const apiKey = document.getElementById('apiKey').value;
+            const url = serverUrl + endpoint;
+
+            const headers = new Headers();
+            headers.append('Content-Type', 'application/json');
+
+            if (apiKey) {
+                headers.append('x-api-key', apiKey);
+            }
+            if (jwtToken) {
+                headers.append('Authorization', `Bearer ${jwtToken}`);
+            }
+
+            const options = {
+                method: method,
+                headers: headers,
+            };
+
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+
+            try {
+                const response = await fetch(url, options);
+                const data = await response.json();
+                displayResponse(data, response.status);
+                return data; // Return data for special handling (like login)
+            } catch (error) {
+                displayResponse({ error: error.message, details: "Could not connect to server or parse response." }, 'Network Error');
+            }
+        }
+
+        // --- Event Listeners ---
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- Modal Close Listeners ---
+            closeModal.addEventListener('click', () => {
+                responseModal.classList.add('hidden');
+            });
+
+            responseModal.addEventListener('click', (e) => {
+                // Close if clicked on the dark background (overlay)
+                if (e.target === responseModal) {
+                    responseModal.classList.add('hidden');
+                }
+            });
+
+            // --- NEW DEBUGGING BUTTON ---
+            document.getElementById('btn-debug-test').addEventListener('click', () => {
+                // We are testing an admin route. 
+                // This will FAIL if the server file is old (404)
+                // This will FAIL if the server is new but JWT is missing (401)
+                // This will SUCCEED if the server is new and JWT is valid admin (200)
+                // The goal is to see if we get 404 or 401. 
+                // A 404 PROVES the server file is old.
+                // A 401 PROVES the server file is new and register should work.
+                handleRequest('/api/admin/stats', 'GET');
+            });
+            // --- END NEW DEBUGGING BUTTON ---
+
+
+            // --- Group 1: Device API ---
+            document.getElementById('form-device-register').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const uid = document.getElementById('reg-uid').value;
+                handleRequest('/api/device/register', 'POST', { uid });
+            });
+
+            document.getElementById('form-device-data').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const body = {
+                    uid: document.getElementById('data-uid').value,
+                    temperature: parseFloat(document.getElementById('data-temp').value),
+                    water_level: parseFloat(document.getElementById('data-water').value),
+                    rainfall: parseFloat(document.getElementById('data-rain').value),
+                };
+                handleRequest('/api/device/data', 'POST', body);
+            });
+
+            // --- Group 2: User API ---
+            document.getElementById('form-user-register').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const body = {
+                    name: document.getElementById('reg-name').value,
+                    email: document.getElementById('reg-email').value,
+                    password: document.getElementById('reg-password').value,
+                };
+                handleRequest('/api/user/register', 'POST', body);
+            });
+
+            document.getElementById('form-user-login').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const body = {
+                    email: document.getElementById('login-email').value,
+                    password: document.getElementById('login-password').value,
+                };
+                const data = await handleRequest('/api/user/login', 'POST', body);
+                
+                // --- Save JWT Token ---
+                if (data && data.success && data.token) {
+                    jwtToken = data.token;
+                    document.getElementById('jwtToken').value = jwtToken;
+                    // --- (FIX) Removed faulty auto-fill line. We will auto-fill after fetching devices. ---
+                }
+            });
+
+            document.getElementById('form-device-add').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const uid = document.getElementById('add-uid').value;
+                handleRequest('/api/user/device/add', 'POST', { uid });
+            });
+
+            document.getElementById('form-device-remove').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const uid = document.getElementById('remove-uid').value;
+                // Note: DELETE with body. Fetch API supports this.
+                handleRequest('/api/user/device/remove', 'DELETE', { uid });
+            });
+
+            document.getElementById('btn-user-devices').addEventListener('click', async () => {
+                // --- (FIX) Added 'async' and 'data' capture ---
+                const data = await handleRequest('/api/user/devices', 'GET');
+
+                // --- (FIX) Auto-fill other fields with the first device UID ---
+                if (data && Array.isArray(data) && data.length > 0) {
+                    const firstUid = data[0].uid;
+                    if (firstUid) {
+                        // Auto-fill all UID fields for convenience
+                        document.getElementById('add-uid').value = firstUid;
+                        document.getElementById('remove-uid').value = firstUid;
+                        document.getElementById('history-uid').value = firstUid;
+                        // Also fill the device data UID field
+                        document.getElementById('data-uid').value = firstUid;
+                    }
+                }
+                // --- End of Fix ---
+            });
+
+            document.getElementById('form-device-history').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const uid = document.getElementById('history-uid').value;
+                const start = document.getElementById('history-start').value;
+                const end = document.getElementById('history-end').value;
+                handleRequest(`/api/user/device/${uid}/data?start=${start}&end=${end}`, 'GET');
+            });
+
+            // --- Group 3: Admin API ---
+            document.getElementById('btn-admin-devices').addEventListener('click', () => {
+                handleRequest('/api/admin/devices', 'GET');
+            });
+
+            document.getElementById('form-admin-report').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const year = document.getElementById('report-year').value;
+                handleRequest(`/api/admin/report?year=${year}`, 'GET');
+            });
+
+            document.getElementById('btn-admin-stats').addEventListener('click', () => {
+                handleRequest('/api/admin/stats', 'GET');
+            });
+
+            // --- Group 4: Socket.io ---
+            const socketLog = document.getElementById('socket-log');
+            function logSocket(message) {
+                const line = document.createElement('div');
+                line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+                socketLog.appendChild(line);
+                socketLog.scrollTop = socketLog.scrollHeight;
+            }
+
+            document.getElementById('btn-socket-connect').addEventListener('click', () => {
+                if (socket && socket.connected) {
+                    logSocket('Already connected.');
+                    return;
+                }
+                
+                const serverUrl = document.getElementById('serverUrl').value;
+                socket = io(serverUrl);
+                logSocket(`Connecting to ${serverUrl}...`);
+
+                socket.on('connect', () => {
+                    logSocket('Socket.io Connected successfully!');
+                });
+
+                socket.on('connectionStatus', (message) => {
+                    logSocket(`Server: ${message}`);
+                });
+
+                socket.on('newDataBatch', (dataArray) => {
+                    logSocket(`--- Received newDataBatch (${dataArray.length} items) ---`);
+                    // Log first item as preview
+                    if (dataArray.length > 0) {
+                        logSocket(JSON.stringify(dataArray[0]) + (dataArray.length > 1 ? ` (and ${dataArray.length - 1} more...)` : ''));
+                    }
+                });
+
+                socket.on('disconnect', () => {
+                    logSocket('Socket.io Disconnected.');
+                });
+                
+                socket.on('connect_error', (err) => {
+                    logSocket(`Connection Error: ${err.message}`);
+                });
+            });
+        });
+    </script>
+</body>
+</html>
+
+
