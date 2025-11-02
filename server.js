@@ -132,7 +132,7 @@ async function run() {
 
     // !! ক্রিটিক্যাল: ESP32 থেকে ডেটা গ্রহণ (POST) - ব্যাচ মোডে
     // এই রুটটি এখন আর ডাটাবেসে সরাসরি রাইট করবে না, বাফারে জমা করবে
-    app.post('/api/esp32p', async (req, res) => {
+    app.post('/api/esp32pp', async (req, res) => {
       try {
         const data = req.body;
 
@@ -149,6 +149,39 @@ async function run() {
         res.status(400).send({ message: 'Invalid data format' });
       }
     });
+
+
+
+app.post('/api/esp32p', async (req, res) => {
+  try {
+    const data = req.body;
+
+    // Bangladesh (UTC+6) সময় গণনা
+    const now = new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    const bdTime = new Date(utc + 6 * 60 * 60000);
+
+    // যদি ESP32 থেকে timestamp আসে, সেটাকেও BD টাইমে রূপান্তর করা
+    if (data.timestamp) {
+      const t = new Date(data.timestamp);
+      const utcT = t.getTime() + t.getTimezoneOffset() * 60000;
+      data.timestamp = new Date(utcT + 6 * 60 * 60000);
+    } else {
+      data.timestamp = bdTime;
+    }
+
+    // সার্ভার রিসিভ টাইম (Bangladesh Time)
+    data.receivedAt = bdTime;
+
+    // ডেটা বাফারে যোগ করা
+    espDataBuffer.push(data);
+
+    // দ্রুত রেসপন্স পাঠানো
+    res.status(200).send({ message: 'Data accepted and queued.' });
+  } catch (error) {
+    res.status(400).send({ message: 'Invalid data format' });
+  }
+});
 
     // GET /api/device/data
     // Returns the last N (default 300) data points from EspCollection, optional ?uid=...
