@@ -188,7 +188,7 @@ app.post('/api/esp32p', async (req, res) => {
     app.get('/api/device/data', async (req, res) => {
       try {
         const { uid, limit } = req.query || {};
-        const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 300)); // cap between 1 and 1000
+        const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 600)); // cap between 1 and 1000
         const q = {};
         if (uid) q.uid = String(uid);
 
