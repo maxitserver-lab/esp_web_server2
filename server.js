@@ -105,28 +105,38 @@ async function flushDataBuffer(collection, devicesCollection) {
       if (data.uid) {
         const newTime = data.receivedAt || new Date();
         const existing = lastSeenUpdates.get(data.uid);
-        if (!existing || newTime > existing) {
-          lastSeenUpdates.set(data.uid, newTime);
+        // [পরিবর্তন] এখন .time চেক করবে, কারণ আমরা পুরো অবজেক্ট সেভ করবো
+        if (!existing || newTime > existing.time) {
+          // [পরিবর্তন] সময় এবং পুরো ডেটা প্যাকেটটি সেভ করবে
+          lastSeenUpdates.set(data.uid, { time: newTime, packet: data });
         }
       }
     }
 
     if (lastSeenUpdates.size > 0) {
       const bulkOps = [];
-      lastSeenUpdates.forEach((time, uid) => {
+      // [পরিবর্তন] value এখন { time, packet } অবজেক্ট
+      lastSeenUpdates.forEach(({ time, packet }, uid) => {
+        
+        // [নতুন] প্যাকেট থেকে সেন্সর ডেটা আলাদা করা
+        // এটি uid, _id, timestamp, receivedAt বাদ দিয়ে বাকি সব (temperature, water_level) কে lastData অবজেক্টে রাখবে
+        const { uid: _uid, _id, timestamp, receivedAt, ...lastData } = packet;
+
         bulkOps.push({
           updateOne: {
             filter: { uid: uid },
             update: {
               $set: {
                 lastSeen: time,
-                status: 'online' // যখনই ডেটা পাই, তখনই 'online'
+                status: 'online', // যখনই ডেটা পাই, তখনই 'online'
+                data: lastData // <-- ★★★ নতুন সংযোজন: সর্বশেষ ডেটা সেভ করা ★★★
               },
               $setOnInsert: { // যদি ডিভাইসটি আগে না থাকে
                 uid: uid,
                 addedAt: new Date(),
                 location: null, // নতুন ডিভাইসে ডিফল্ট লোকেশন
                 name: null
+                // দ্রষ্টব্য: $set এ data இருப்பதால் $setOnInsert এ data দেওয়ার প্রয়োজন নেই
               }
             },
             upsert: true // যদি uid না থাকে, নতুন ডকুমেন্ট তৈরি করবে
@@ -612,7 +622,8 @@ async function run() {
       try {
         // _id বাদে সব ডিভাইসের তথ্য পাঠানো
         const devices = await devicesCollection.find({})
-          .project({ _id: 0, uid: 1, name: 1, location: 1, status: 1, lastSeen: 1, addedAt: 1 })
+          // [পরিবর্তন] data: 1 যোগ করা হয়েছে
+          .project({ _id: 0, uid: 1, name: 1, location: 1, status: 1, lastSeen: 1, addedAt: 1, data: 1 })
           .toArray();
           
         res.send(devices);
@@ -676,7 +687,8 @@ async function run() {
         const found = await devicesCollection.find({ uid: { $in: uDevices } }).toArray();
         const result = uDevices.map((uid) => {
           const d = found.find((x) => x.uid === uid);
-          return { uid, name: d?.name, location: d?.location, status: d ? d.status || 'offline' : 'offline', lastSeen: d ? d.lastSeen : null };
+          // [পরিবর্তন] data: d?.data || null যোগ করা হয়েছে
+          return { uid, name: d?.name, location: d?.location, status: d ? d.status || 'offline' : 'offline', lastSeen: d ? d.lastSeen : null, data: d?.data || null };
         });
 
         return res.send(result);
