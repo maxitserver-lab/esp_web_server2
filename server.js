@@ -28,7 +28,7 @@ const CHECK_OFFLINE_INTERVAL_MS = 1 * 60 * 1000; // প্রতি ১ মি�
 let espDataBuffer = []; // ESP32 থেকে আসা ডেটা এখানে জমা হবে
 const backupJobs = new Map(); // jobId -> { status, progress, tmpDir, zipPath, error }
 
-// --- অ্যাপ এবং সার্ভার সেটআপ ---
+// --- অ্যাপ এবং সার্ভার সেট আপ ---
 const app = express();
 const port = process.env.PORT || 3002;
 const http_server = http.createServer(app); // socket.io এর জন্য http সার্ভার
