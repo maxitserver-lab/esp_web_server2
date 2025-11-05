@@ -895,6 +895,60 @@ async function run() {
       }
     });
 
+    // --- [নতুন রুট] ---
+    // GET /api/user/profile (protected)
+    // লগইন করা ইউজারের প্রোফাইল তথ্য দেখানোর জন্য
+    app.get('/api/user/profile', authenticateJWT, async (req, res) => {
+      try {
+        const userId = req.user && req.user.userId;
+        if (!userId) return res.status(401).send({ success: false, message: 'Unauthorized' });
+
+        const user = await usersCollection.findOne(
+          { _id: new ObjectId(userId) },
+          { projection: { passwordHash: 0 } } // <-- নিরাপত্তা: পাসওয়ার্ড হ্যাশ বাদ দিয়ে
+        );
+
+        if (!user) {
+          return res.status(404).send({ success: false, message: 'User not found' });
+        }
+        
+        // অ্যাডমিন স্ট্যাটাস চেক করে পাঠানো
+        const isAdminEnv = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL;
+        user.isAdmin = user.isAdmin === true || isAdminEnv;
+
+        res.send(user);
+
+      } catch (error) {
+        console.error('Error in /api/user/profile:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+    // --- [নতুন রুট শেষ] ---
+
+
+    // GET /api/user/device/:uid/data (protected)
+    // ইউজারের নির্দিষ্ট ডিভাইসের ডেটা
+    // GET /api/admin/users
+    // সব ইউজারদের তালিকা (অ্যাডমিন রুট)
+    app.get('/api/admin/users', authenticateJWT, async (req, res) => {
+      const check = await ensureAdmin(req, res);
+      if (!check || check.ok !== true) return; // অ্যাডমিন কিনা চেক করা
+
+      try {
+        const users = await usersCollection.find({})
+          .project({ passwordHash: 0 }) // <-- নিরাপত্তা জনিত কারণে পাসওয়ার্ড হ্যাশ বাদ দিয়ে পাঠানো
+          .toArray();
+        
+        res.send(users);
+
+      } catch (error) {
+        console.error('Error in /api/admin/users:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+    // --- [নতুন রুট শেষ] ---
+
+
     // GET /api/admin/stats
     // অ্যাডমিন ড্যাশবোর্ডের জন্য পরিসংখ্যান
     app.get('/api/admin/stats', authenticateJWT, async (req, res) => {
