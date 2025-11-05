@@ -15,11 +15,15 @@ const helmet = require('helmet'); // HTTP হেডার সুরক্ষি�
 const compression = require('compression'); // রেসপন্স Gzip করার জন্য
 require('dotenv').config(); // .env ফাইল থেকে গোপন তথ্য লোড করার জন্য
 
-
 // --- গ্লোবাল ভেরিয়েবল ---
 const JWT_SECRET = process.env.JWT_SECRET || 'please_change_this_secret';
 const BATCH_INTERVAL_MS = 10000; // ১০ সেকেন্ড পর পর ডাটাবেসে সেভ হবে
 const FILTER_INTERVAL_MS = 10 * 60 * 1000; // ১০ মিনিট
+
+// --- নতুন সংযোজন: অফলাইন চেকের জন্য ভেরিয়েবল ---
+const OFFLINE_THRESHOLD_MS = 10 * 60 * 1000; // ১০ মিনিট (অফলাইন হওয়ার সময়)
+const CHECK_OFFLINE_INTERVAL_MS = 1 * 60 * 1000; // প্রতি ১ মিনিটে চেক করবে
+// --- শেষ সংযোজন ---
 
 let espDataBuffer = []; // ESP32 থেকে আসা ডেটা এখানে জমা হবে
 const backupJobs = new Map(); // jobId -> { status, progress, tmpDir, zipPath, error }
@@ -88,6 +92,12 @@ async function flushDataBuffer(collection, devicesCollection) {
     // ১. মূল ডেটা EspCollection-এ ইনসার্ট করা
     await collection.insertMany(dataToInsert, { ordered: false });
     console.log(`[Batch Insert] Successfully inserted ${dataToInsert.length} documents.`);
+    
+    // --- [Socket.io ব্রডকাস্ট] ---
+    // নতুন ডেটা ক্লায়েন্টদের কাছে পাঠানো
+    // দ্রষ্টব্য: যদি ডেটা খুব বেশি হয় (যেমন >১০০০), তাহলে একটি সারাংশ (summary) পাঠানো ভালো
+    io.emit('new-data', dataToInsert);
+    // --- ব্রডকাস্ট শেষ ---
 
     // --- [ফাস্ট সিঙ্ক] রিয়েল-টাইম ডিভাইস স্ট্যাটাস আপডেট ---
     const lastSeenUpdates = new Map();
@@ -228,6 +238,44 @@ async function run() {
     // db.devices.createIndex({ uid: 1 }, { unique: true })
     // db.users.createIndex({ email: 1 }, { unique: true })
 
+
+    // --- [নতুন ফাংশন] অফলাইন চেকার ---
+    /**
+     * [অফলাইন চেকার]
+     * যে ডিভাইসগুলো 'online' স্ট্যাটাসে আছে কিন্তু
+     * OFFLINE_THRESHOLD_MS (১০ মিনিট) ধরে কোনো ডেটা পাঠায়নি,
+     * সেগুলোকে 'offline' সেট করে।
+     */
+    async function checkOfflineDevices() {
+      console.log('[Offline Check] Running job to find offline devices...');
+      try {
+        // ১০ মিনিট আগের সময়
+        const thresholdTime = new Date(Date.now() - OFFLINE_THRESHOLD_MS);
+        
+        // সেই সব ডিভাইস খুঁজুন যারা 'online' কিন্তু 'lastSeen' ১০ মিনিটের বেশি পুরনো
+        const result = await devicesCollection.updateMany(
+          { 
+            status: 'online', 
+            lastSeen: { $lt: thresholdTime } // lastSeen < (বর্তমান সময় - ১০ মিনিট)
+          },
+          { 
+            $set: { status: 'offline' } 
+          }
+        );
+
+        if (result.modifiedCount > 0) {
+          console.log(`[Offline Check] Marked ${result.modifiedCount} devices as offline.`);
+          // একটি সকেট ইভেন্ট পাঠানো যেতে পারে অ্যাডমিন ড্যাশবোর্ড আপডেটের জন্য
+          io.emit('device-status-updated', { offlineCount: result.modifiedCount });
+        }
+        // যদি 0 হয়, তার মানে সব অনলাইন ডিভাইস ঠিকঠাক ডেটা পাঠাচ্ছে।
+      } catch (error) {
+        console.error('[Offline Check] Error checking for offline devices:', error.message);
+      }
+    }
+    // --- অফলাইন চেকার ফাংশন শেষ ---
+
+
     // --- টাইমার চালু করা ---
     
     // [ফাস্ট সিঙ্ক] প্রতি ১০ সেকেন্ড পর পর বাফার খালি করা
@@ -239,9 +287,19 @@ async function run() {
     // প্রতি ১৫ মিনিটে পুরনো ব্যাকআপ জব মুছে ফেলা
     setInterval(cleanupOldBackupJobs, 15 * 60 * 1000);
 
+    // --- [নতুন টাইমার] ---
+    // [অফলাইন চেকার] প্রতি ১ মিনিটে অফলাইন ডিভাইস চেক করা
+    setInterval(() => checkOfflineDevices(), CHECK_OFFLINE_INTERVAL_MS);
+    // --- নতুন টাইমার শেষ ---
+
     // সার্ভার চালু হলেই একবার 'স্লো সিঙ্ক' চালানোর জন্য
     console.log('Running initial device list sync job on startup...');
     syncAllDevices(EspCollection, devicesCollection);
+    
+    // সার্ভার চালু হলেই একবার 'অফলাইন চেক' চালানোর জন্য
+    console.log('Running initial offline device check on startup...');
+    checkOfflineDevices();
+
 
     // --- অ্যাডমিন চেক হেল্পার (run-এর ভেতরে) ---
     async function ensureAdmin(req, res) {
@@ -278,14 +336,8 @@ async function run() {
       }
     });
 
-<<<<<<< HEAD
     // ESP32 থেকে ডেটা গ্রহণ (POST) - বাংলাদেশ টাইমসহ (আপনার পুরনো রুট)
     app.post('/api/esp32p', async (req, res) => {
-=======
-    // !! ক্রিটিক্যাল: ESP32 থেকে ডেটা গ্রহণ (POST) - ব্যাচ মোডে
-    // এই রুটটি এখন আর ডাটাবেসে সরাসরি রাইট করবে না, বাফারে জমা করবে
-    app.post('/api/esp32pp', async (req, res) => {
->>>>>>> d72c869113cb3c8f1cb50bfc82e6e248560d4ddf
       try {
         const data = req.body;
         // দ্রষ্টব্য: সার্ভারে UTC টাইম সংরক্ষণ করা ভালো অভ্যাস
@@ -303,7 +355,6 @@ async function run() {
       }
     });
 
-<<<<<<< HEAD
     // ESP32 থেকে ডেটা পড়া (GET) - সব ডেটা
     app.get('/api/esp32', async (req, res) => {
       const query = {};
@@ -313,51 +364,13 @@ async function run() {
     });
 
     // --- Public Data Routes ---
-=======
-
-
-app.post('/api/esp32p', async (req, res) => {
-  try {
-    const data = req.body;
-
-    // Bangladesh (UTC+6) সময় গণনা
-    const now = new Date();
-    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-    const bdTime = new Date(utc + 6 * 60 * 60000);
-
-    // যদি ESP32 থেকে timestamp আসে, সেটাকেও BD টাইমে রূপান্তর করা
-    if (data.timestamp) {
-      const t = new Date(data.timestamp);
-      const utcT = t.getTime() + t.getTimezoneOffset() * 60000;
-      data.timestamp = new Date(utcT + 6 * 60 * 60000);
-    } else {
-      data.timestamp = bdTime;
-    }
-
-    // সার্ভার রিসিভ টাইম (Bangladesh Time)
-    data.receivedAt = bdTime;
-
-    // ডেটা বাফারে যোগ করা
-    espDataBuffer.push(data);
-
-    // দ্রুত রেসপন্স পাঠানো
-    res.status(200).send({ message: 'Data accepted and queued.' });
-  } catch (error) {
-    res.status(400).send({ message: 'Invalid data format' });
-  }
-});
->>>>>>> d72c869113cb3c8f1cb50bfc82e6e248560d4ddf
 
     // GET /api/device/data
-    // সর্বশেষ N (default 300) ডেটা পয়েন্ট
+    // সর্বশেষ N (default 300) ডেটা পয়েন্ট
     app.get('/api/device/data', async (req, res) => {
       try {
         const { uid, limit } = req.query || {};
-<<<<<<< HEAD
         const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 300));
-=======
-        const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 600)); // cap between 1 and 1000
->>>>>>> d72c869113cb3c8f1cb50bfc82e6e248560d4ddf
         const q = {};
         if (uid) q.uid = String(uid);
 
@@ -375,7 +388,7 @@ app.post('/api/esp32p', async (req, res) => {
     });
 
     // POST /api/device/data-by-range
-    // তারিখ অনুযায়ী ডেটা
+    // তারিখ অনুযায়ী ডেটা
     app.post('/api/device/data-by-range', async (req, res) => {
       try {
         const { uid, start, end, limit } = req.body || {};
@@ -595,7 +608,7 @@ app.post('/api/esp32p', async (req, res) => {
 
     // GET /api/device/list (যেকোনো লগইন করা ইউজার)
     // devicesCollection থেকে সব ডিভাইসের লিস্ট দেখাবে
-    app.get('/api/device/list', async (req, res) => {
+    app.get('/api/device/list', authenticateJWT, async (req, res) => {
       try {
         // _id বাদে সব ডিভাইসের তথ্য পাঠানো
         const devices = await devicesCollection.find({})
@@ -707,7 +720,7 @@ app.post('/api/esp32p', async (req, res) => {
     // --- Admin-Protected Routes ---
 
     // POST /api/filter/device (অ্যাডমিন রুট)
-    // ম্যানুয়ালি ১০-মিনিটের "স্লো সিঙ্ক" জবটি ট্রিগার করার জন্য
+    // ম্যানুয়ালি ১০-মিনিটের "স্লো সিঙ্ক" জবটি ট্রিগার করার জন্য
     app.post('/api/filter/device', authenticateJWT, async (req, res) => {
       const check = await ensureAdmin(req, res);
       if (!check || check.ok !== true) return; // অ্যাডমিন কিনা চেক করা
