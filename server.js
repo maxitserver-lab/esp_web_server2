@@ -103,7 +103,11 @@ async function flushDataBuffer(collection, devicesCollection) {
     const lastSeenUpdates = new Map();
     for (const data of dataToInsert) {
       if (data.uid) {
-        const newTime = data.receivedAt || new Date();
+        
+        // [পরিবর্তন] lastSeen-এর জন্য data.timestamp-কে প্রাধান্য দেওয়া হবে
+        // এটি ESP32-এর পাঠানো সময়কে ব্যবহার করবে (যদি থাকে)
+        const newTime = data.timestamp || data.receivedAt || new Date();
+        
         const existing = lastSeenUpdates.get(data.uid);
         // [পরিবর্তন] এখন .time চেক করবে, কারণ আমরা পুরো অবজেক্ট সেভ করবো
         if (!existing || newTime > existing.time) {
