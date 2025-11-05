@@ -277,8 +277,14 @@ async function run() {
       }
     });
 
+<<<<<<< HEAD
     // ESP32 থেকে ডেটা গ্রহণ (POST) - বাংলাদেশ টাইমসহ (আপনার পুরনো রুট)
     app.post('/api/esp32p', async (req, res) => {
+=======
+    // !! ক্রিটিক্যাল: ESP32 থেকে ডেটা গ্রহণ (POST) - ব্যাচ মোডে
+    // এই রুটটি এখন আর ডাটাবেসে সরাসরি রাইট করবে না, বাফারে জমা করবে
+    app.post('/api/esp32pp', async (req, res) => {
+>>>>>>> d72c869113cb3c8f1cb50bfc82e6e248560d4ddf
       try {
         const data = req.body;
         // দ্রষ্টব্য: সার্ভারে UTC টাইম সংরক্ষণ করা ভালো অভ্যাস
@@ -296,6 +302,7 @@ async function run() {
       }
     });
 
+<<<<<<< HEAD
     // ESP32 থেকে ডেটা পড়া (GET) - সব ডেটা
     app.get('/api/esp32', async (req, res) => {
       const query = {};
@@ -305,13 +312,51 @@ async function run() {
     });
 
     // --- Public Data Routes ---
+=======
+
+
+app.post('/api/esp32p', async (req, res) => {
+  try {
+    const data = req.body;
+
+    // Bangladesh (UTC+6) সময় গণনা
+    const now = new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    const bdTime = new Date(utc + 6 * 60 * 60000);
+
+    // যদি ESP32 থেকে timestamp আসে, সেটাকেও BD টাইমে রূপান্তর করা
+    if (data.timestamp) {
+      const t = new Date(data.timestamp);
+      const utcT = t.getTime() + t.getTimezoneOffset() * 60000;
+      data.timestamp = new Date(utcT + 6 * 60 * 60000);
+    } else {
+      data.timestamp = bdTime;
+    }
+
+    // সার্ভার রিসিভ টাইম (Bangladesh Time)
+    data.receivedAt = bdTime;
+
+    // ডেটা বাফারে যোগ করা
+    espDataBuffer.push(data);
+
+    // দ্রুত রেসপন্স পাঠানো
+    res.status(200).send({ message: 'Data accepted and queued.' });
+  } catch (error) {
+    res.status(400).send({ message: 'Invalid data format' });
+  }
+});
+>>>>>>> d72c869113cb3c8f1cb50bfc82e6e248560d4ddf
 
     // GET /api/device/data
     // সর্বশেষ N (default 300) ডেটা পয়েন্ট
     app.get('/api/device/data', async (req, res) => {
       try {
         const { uid, limit } = req.query || {};
+<<<<<<< HEAD
         const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 300));
+=======
+        const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 600)); // cap between 1 and 1000
+>>>>>>> d72c869113cb3c8f1cb50bfc82e6e248560d4ddf
         const q = {};
         if (uid) q.uid = String(uid);
 
