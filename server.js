@@ -350,13 +350,32 @@ async function run() {
     app.post('/api/esp32p', async (req, res) => {
       try {
         const data = req.body;
-        // দ্রষ্টব্য: সার্ভারে UTC টাইম সংরক্ষণ করা ভালো অভ্যাস
-        const now = new Date();
-        const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-        const bdTime = new Date(utc + 6 * 60 * 60000);
+        
+        // --- [পরিবর্তন] বাংলাদেশ সময় (+6) ক্যালকুলেশন ঠিক করা ---
+        // সার্ভারের লোকাল টাইমজোন যাই হোক না কেন, এটি সঠিকভাবে UTC+6 সময় তৈরি করবে
+        
+        // ১. বর্তমান UTC সময় মিলিসেকেন্ডে নেওয়া
+        const now_utc_ms = Date.now();
+        // ২. এর সাথে ৬ ঘণ্টার মিলিসেকেন্ড যোগ করে নতুন Date অবজেক্ট তৈরি করা
+        const bdTime = new Date(now_utc_ms + (6 * 60 * 60000)); // (6 hours * 60 min * 60 sec * 1000 ms)
 
-        data.timestamp = data.timestamp ? new Date(data.timestamp) : bdTime;
+        // [পরিবর্তন] data.receivedAt সব সময় সার্ভারের (BD Time) রিসিভ টাইম হবে
         data.receivedAt = bdTime; 
+
+        // [পরিবর্তন] ESP32-এর পাঠানো timestamp-কে +06:00 টাইমজোনে পার্স করা
+        if (data.timestamp && typeof data.timestamp === 'string' && data.timestamp.length >= 19) {
+            // ESP32-এর ফরম্যাট: "2025-11-06 02:36:57"
+            // এটিকে ISO ফরম্যাটে (+06:00) রূপান্তর করা
+            const timeString = data.timestamp.substring(0, 19).replace(' ', 'T'); // "2025-11-06T02:36:57"
+            
+            // +06:00 জোরাজুরিভাবে যোগ করা (ধরে নিচ্ছি ESP32 সব সময় BD time পাঠায়)
+            data.timestamp = new Date(`${timeString}+06:00`);
+            
+        } else {
+            // যদি ESP32 কোনো timestamp না পাঠায় বা ফরম্যাট ভুল হয়,
+            // তবে সার্ভারের BD time-কে ফলব্যাক হিসেবে ব্যবহার করা
+            data.timestamp = bdTime;
+        }
 
         espDataBuffer.push(data);
         res.status(200).send({ message: 'Data accepted and queued.' });
