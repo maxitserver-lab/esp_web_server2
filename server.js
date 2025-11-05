@@ -15,6 +15,7 @@ const helmet = require('helmet'); // HTTP হেডার সুরক্ষি�
 const compression = require('compression'); // রেসপন্স Gzip করার জন্য
 require('dotenv').config(); // .env ফাইল থেকে গোপন তথ্য লোড করার জন্য
 
+
 // --- গ্লোবাল ভেরিয়েবল ---
 const JWT_SECRET = process.env.JWT_SECRET || 'please_change_this_secret';
 const BATCH_INTERVAL_MS = 10000; // ১০ সেকেন্ড পর পর ডাটাবেসে সেভ হবে
