@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const path = require('path');
@@ -19,16 +18,13 @@ require('dotenv').config(); // .env ফাইল থেকে গোপন ত�
 const JWT_SECRET = process.env.JWT_SECRET || 'please_change_this_secret';
 const BATCH_INTERVAL_MS = 10000; // ১০ সেকেন্ড পর পর ডাটাবেসে সেভ হবে
 const FILTER_INTERVAL_MS = 10 * 60 * 1000; // ১০ মিনিট
-
-// --- নতুন সংযোজন: অফলাইন চেকের জন্য ভেরিয়েবল ---
 const OFFLINE_THRESHOLD_MS = 10 * 60 * 1000; // ১০ মিনিট (অফলাইন হওয়ার সময়)
 const CHECK_OFFLINE_INTERVAL_MS = 1 * 60 * 1000; // প্রতি ১ মিনিটে চেক করবে
-// --- শেষ সংযোজন ---
 
 let espDataBuffer = []; // ESP32 থেকে আসা ডেটা এখানে জমা হবে
 const backupJobs = new Map(); // jobId -> { status, progress, tmpDir, zipPath, error }
 
-// --- অ্যাপ এবং সার্ভার সেট আপ ---
+// --- অ্যাপ এবং সার্ভার সেটআপ ---
 const app = express();
 const port = process.env.PORT || 3002;
 const http_server = http.createServer(app); // socket.io এর জন্য http সার্ভার
@@ -60,9 +56,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// --- ফাইল আপলোড (Multer) ---
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+// --- ফাইল আপলোড (Multer) - সরানো হয়েছে কারণ এটি ব্যবহৃত হচ্ছিল না ---
 
 // --- MongoDB কানেকশন ---
 const uri = process.env.MONGODB_URI; // .env ফাইল থেকে URI লোড করা
@@ -93,54 +87,51 @@ async function flushDataBuffer(collection, devicesCollection) {
     await collection.insertMany(dataToInsert, { ordered: false });
     console.log(`[Batch Insert] Successfully inserted ${dataToInsert.length} documents.`);
     
-    // --- [Socket.io ব্রডকাস্ট] ---
-    // নতুন ডেটা ক্লায়েন্টদের কাছে পাঠানো
-    // দ্রষ্টব্য: যদি ডেটা খুব বেশি হয় (যেমন >১০০০), তাহলে একটি সারাংশ (summary) পাঠানো ভালো
+    // নতুন ডেটা ক্লায়েন্টদের কাছে পাঠানো (socket.io)
     io.emit('new-data', dataToInsert);
-    // --- ব্রডকাস্ট শেষ ---
 
     // --- [ফাস্ট সিঙ্ক] রিয়েল-টাইম ডিভাইস স্ট্যাটাস আপডেট ---
     const lastSeenUpdates = new Map();
     for (const data of dataToInsert) {
       if (data.uid) {
-        
         // [পরিবর্তন] lastSeen-এর জন্য data.timestamp-কে প্রাধান্য দেওয়া হবে
-        // এটি ESP32-এর পাঠানো সময়কে ব্যবহার করবে (যদি থাকে)
-        const newTime = data.timestamp || data.receivedAt || new Date();
-        
+        const newTime = data.timestamp || data.receivedAt || new Date(); 
         const existing = lastSeenUpdates.get(data.uid);
-        // [পরিবর্তন] এখন .time চেক করবে, কারণ আমরা পুরো অবজেক্ট সেভ করবো
-        if (!existing || newTime > existing.time) {
-          // [পরিবর্তন] সময় এবং পুরো ডেটা প্যাকেটটি সেভ করবে
-          lastSeenUpdates.set(data.uid, { time: newTime, packet: data });
+        
+        // শুধুমাত্র সর্বশেষ ডেটা এবং সময় সংরক্ষণ করা
+        if (!existing || newTime >= existing.time) {
+          lastSeenUpdates.set(data.uid, { 
+            time: newTime, 
+            data: { // সর্বশেষ সেন্সর ডেটা
+              temperature: data.temperature,
+              water_level: data.water_level,
+              rainfall: data.rainfall
+            } 
+          });
         }
       }
     }
 
     if (lastSeenUpdates.size > 0) {
       const bulkOps = [];
-      // [পরিবর্তন] value এখন { time, packet } অবজেক্ট
-      lastSeenUpdates.forEach(({ time, packet }, uid) => {
-        
-        // [নতুন] প্যাকেট থেকে সেন্সর ডেটা আলাদা করা
-        // এটি uid, _id, timestamp, receivedAt বাদ দিয়ে বাকি সব (temperature, water_level) কে lastData অবজেক্টে রাখবে
-        const { uid: _uid, _id, timestamp, receivedAt, ...lastData } = packet;
+      const updatedDeviceUIDs = [];
 
+      lastSeenUpdates.forEach((update, uid) => {
+        updatedDeviceUIDs.push(uid);
         bulkOps.push({
           updateOne: {
             filter: { uid: uid },
             update: {
               $set: {
-                lastSeen: time,
+                lastSeen: update.time,
                 status: 'online', // যখনই ডেটা পাই, তখনই 'online'
-                data: lastData // <-- ★★★ নতুন সংযোজন: সর্বশেষ ডেটা সেভ করা ★★★
+                data: update.data // সর্বশেষ সেন্সর ডেটা আপডেট করা
               },
               $setOnInsert: { // যদি ডিভাইসটি আগে না থাকে
                 uid: uid,
                 addedAt: new Date(),
                 location: null, // নতুন ডিভাইসে ডিফল্ট লোকেশন
                 name: null
-                // দ্রষ্টব্য: $set এ data இருப்பதால் $setOnInsert এ data দেওয়ার প্রয়োজন নেই
               }
             },
             upsert: true // যদি uid না থাকে, নতুন ডকুমেন্ট তৈরি করবে
@@ -151,6 +142,9 @@ async function flushDataBuffer(collection, devicesCollection) {
       // ২. devicesCollection-এ স্ট্যাটাস এবং নতুন ডিভাইস যোগ করা
       await devicesCollection.bulkWrite(bulkOps, { ordered: false });
       console.log(`[Device Status] Fast Sync: Updated ${bulkOps.length} devices in devicesCollection.`);
+      
+      // ডিভাইস স্ট্যাটাস আপডেট ক্লায়েন্টদের কাছে পাঠানো (socket.io)
+      io.emit('device-status-updated', updatedDeviceUIDs);
     }
     // --- ডিভাইস স্ট্যাটাস আপডেট শেষ ---
 
@@ -186,7 +180,8 @@ async function syncAllDevices(EspCollection, devicesCollection) {
             uid: uid, 
             addedAt: new Date(),
             status: 'unknown', // আমরা শুধু জানি এটি বিদ্যমান, স্ট্যাটাস জানি না
-            lastSeen: null
+            lastSeen: null,
+            data: {} // নতুন ডিভাইসে খালি ডেটা
           } 
         },
         upsert: true // যদি UID না থাকে, তবে নতুন ডকুমেন্ট তৈরি করবে
@@ -205,6 +200,52 @@ async function syncAllDevices(EspCollection, devicesCollection) {
     console.error('[Device Sync Job] Error in 10-min sync job:', error);
   }
 }
+
+/**
+ * [অফলাইন চেকার]
+ * যে ডিভাইসগুলো 'online' স্ট্যাটাসে আছে কিন্তু
+ * OFFLINE_THRESHOLD_MS (১০ মিনিট) ধরে কোনো ডেটা পাঠায়নি,
+ * সেগুলোকে 'offline' সেট করে।
+ */
+async function checkOfflineDevices(devicesCollection) {
+  console.log('[Offline Check] Running job to find offline devices...');
+  try {
+    // ১০ মিনিট আগের সময়
+    const thresholdTime = new Date(Date.now() - OFFLINE_THRESHOLD_MS);
+    
+    // সেই সব ডিভাইস খুঁজুন যারা 'online' কিন্তু 'lastSeen' ১০ মিনিটের বেশি পুরনো
+    const devicesToUpdate = await devicesCollection.find(
+      { 
+        status: 'online', 
+        lastSeen: { $lt: thresholdTime } // lastSeen < (বর্তমান সময় - ১০ মিনিট)
+      },
+      { projection: { uid: 1 } }
+    ).toArray();
+
+    if (devicesToUpdate.length === 0) {
+      // অফলাইন করার মতো কোনো ডিভাইস নেই
+      return;
+    }
+
+    const uidsToUpdate = devicesToUpdate.map(d => d.uid);
+
+    const result = await devicesCollection.updateMany(
+      { uid: { $in: uidsToUpdate } },
+      { 
+        $set: { status: 'offline' } 
+      }
+    );
+
+    if (result.modifiedCount > 0) {
+      console.log(`[Offline Check] Marked ${result.modifiedCount} devices as offline.`);
+      // অফলাইন স্ট্যাটাস ক্লায়েন্টদের কাছে পাঠানো (socket.io)
+      io.emit('device-status-updated', uidsToUpdate);
+    }
+  } catch (error) {
+    console.error('[Offline Check] Error checking for offline devices:', error.message);
+  }
+}
+
 
 /**
  * পুরনো ব্যাকআপ জব এবং ফাইল মুছে ফেলার জন্য
@@ -241,8 +282,6 @@ async function run() {
 
     // --- কালেকশন ডিফাইন করা ---
     const EspCollection = db.collection('espdata2'); 
-    const wholesaleCollection = db.collection('wholesale');
-    const lotary = db.collection('lotary');
     const devicesCollection = db.collection('devices'); // ডিভাইস স্ট্যাটাস এবং তথ্যের জন্য
     const usersCollection = db.collection('users'); // ইউজার অথেন্টিকেশন
 
@@ -252,44 +291,6 @@ async function run() {
     // db.devices.createIndex({ uid: 1 }, { unique: true })
     // db.users.createIndex({ email: 1 }, { unique: true })
 
-
-    // --- [নতুন ফাংশন] অফলাইন চেকার ---
-    /**
-     * [অফলাইন চেকার]
-     * যে ডিভাইসগুলো 'online' স্ট্যাটাসে আছে কিন্তু
-     * OFFLINE_THRESHOLD_MS (১০ মিনিট) ধরে কোনো ডেটা পাঠায়নি,
-     * সেগুলোকে 'offline' সেট করে।
-     */
-    async function checkOfflineDevices() {
-      console.log('[Offline Check] Running job to find offline devices...');
-      try {
-        // ১০ মিনিট আগের সময়
-        const thresholdTime = new Date(Date.now() - OFFLINE_THRESHOLD_MS);
-        
-        // সেই সব ডিভাইস খুঁজুন যারা 'online' কিন্তু 'lastSeen' ১০ মিনিটের বেশি পুরনো
-        const result = await devicesCollection.updateMany(
-          { 
-            status: 'online', 
-            lastSeen: { $lt: thresholdTime } // lastSeen < (বর্তমান সময় - ১০ মিনিট)
-          },
-          { 
-            $set: { status: 'offline' } 
-          }
-        );
-
-        if (result.modifiedCount > 0) {
-          console.log(`[Offline Check] Marked ${result.modifiedCount} devices as offline.`);
-          // একটি সকেট ইভেন্ট পাঠানো যেতে পারে অ্যাডমিন ড্যাশবোর্ড আপডেটের জন্য
-          io.emit('device-status-updated', { offlineCount: result.modifiedCount });
-        }
-        // যদি 0 হয়, তার মানে সব অনলাইন ডিভাইস ঠিকঠাক ডেটা পাঠাচ্ছে।
-      } catch (error) {
-        console.error('[Offline Check] Error checking for offline devices:', error.message);
-      }
-    }
-    // --- অফলাইন চেকার ফাংশন শেষ ---
-
-
     // --- টাইমার চালু করা ---
     
     // [ফাস্ট সিঙ্ক] প্রতি ১০ সেকেন্ড পর পর বাফার খালি করা
@@ -298,22 +299,15 @@ async function run() {
     // [স্লো সিঙ্ক] প্রতি ১০ মিনিটে ডিভাইস লিস্ট আপডেটের টাইমার
     setInterval(() => syncAllDevices(EspCollection, devicesCollection), FILTER_INTERVAL_MS);
 
+    // [অফলাইন চেকার] প্রতি ১ মিনিটে অফলাইন ডিভাইস চেক করা
+    setInterval(() => checkOfflineDevices(devicesCollection), CHECK_OFFLINE_INTERVAL_MS);
+
     // প্রতি ১৫ মিনিটে পুরনো ব্যাকআপ জব মুছে ফেলা
     setInterval(cleanupOldBackupJobs, 15 * 60 * 1000);
-
-    // --- [নতুন টাইমার] ---
-    // [অফলাইন চেকার] প্রতি ১ মিনিটে অফলাইন ডিভাইস চেক করা
-    setInterval(() => checkOfflineDevices(), CHECK_OFFLINE_INTERVAL_MS);
-    // --- নতুন টাইমার শেষ ---
 
     // সার্ভার চালু হলেই একবার 'স্লো সিঙ্ক' চালানোর জন্য
     console.log('Running initial device list sync job on startup...');
     syncAllDevices(EspCollection, devicesCollection);
-    
-    // সার্ভার চালু হলেই একবার 'অফলাইন চেক' চালানোর জন্য
-    console.log('Running initial offline device check on startup...');
-    checkOfflineDevices();
-
 
     // --- অ্যাডমিন চেক হেল্পার (run-এর ভেতরে) ---
     async function ensureAdmin(req, res) {
@@ -350,43 +344,33 @@ async function run() {
       }
     });
 
-    // ESP32 থেকে ডেটা গ্রহণ (POST) - বাংলাদেশ টাইমসহ (আপনার পুরনো রুট)
+    // ESP32 থেকে ডেটা গ্রহণ (POST) - বাংলাদেশ টাইমসহ
     app.post('/api/esp32p', async (req, res) => {
       try {
         const data = req.body;
         
-        // --- [পরিবর্তন] বাংলাদেশ সময় (+6) ক্যালকুলেশন ঠিক করা ---
-        // সার্ভারের লোকাল টাইমজোন যাই হোক না কেন, এটি সঠিকভাবে UTC+6 সময় তৈরি করবে
-        
-        // ১. বর্তমান UTC সময় মিলিসেকেন্ডে নেওয়া
-        const now_utc_ms = Date.now();
-        // ২. এর সাথে ৬ ঘণ্টার মিলিসেকেন্ড যোগ করে নতুন Date অবজেক্ট তৈরি করা
-        const bdTime = new Date(now_utc_ms + (6 * 60 * 60000)); // (6 hours * 60 min * 60 sec * 1000 ms)
+        // সার্ভারের বর্তমান বাংলাদেশ (+6) সময় গণনা
+        const bdTime = new Date(Date.now() + (6 * 60 * 60 * 1000));
+        data.receivedAt = bdTime; // সার্ভার রিসিভ টাইম (BDT)
 
-        // [পরিবর্তন] data.receivedAt সব সময় সার্ভারের (BD Time) রিসিভ টাইম হবে
-        data.receivedAt = bdTime; 
-
-        // [পরিবর্তন] ESP32-এর পাঠানো timestamp-কে +06:00 টাইমজোনে পার্স করা
-        if (data.timestamp && typeof data.timestamp === 'string' && data.timestamp.length >= 19) {
-            // ESP32-এর ফরম্যাট: "2025-11-06 02:36:57"
-            // এটিকে ISO ফরম্যাটে (+06:00) রূপান্তর করা
-            const timeString = data.timestamp.substring(0, 19).replace(' ', 'T'); // "2025-11-06T02:36:57"
-            
-            // +06:00 জোরাজুরিভাবে যোগ করা (ধরে নিচ্ছি ESP32 সব সময় BD time পাঠায়)
-            data.timestamp = new Date(`${timeString}+06:00`);
-            
+        // ESP32 থেকে আসা টাইমস্ট্যাম্পকে বাংলাদেশ (+6) টাইমজোন হিসেবে গণ্য করা
+        if (data.timestamp && typeof data.timestamp === 'string') {
+          // ইনপুট "2025-11-06 02:44:11"
+          const isoString = data.timestamp.replace(' ', 'T') + "+06:00";
+          data.timestamp = new Date(isoString);
         } else {
-            // যদি ESP32 কোনো timestamp না পাঠায় বা ফরম্যাট ভুল হয়,
-            // তবে সার্ভারের BD time-কে ফলব্যাক হিসেবে ব্যবহার করা
-            data.timestamp = bdTime;
+          // যদি ESP কোনো টাইম না পাঠায়, তবে সার্ভারের BDT টাইম ব্যবহার করা
+          data.timestamp = bdTime;
         }
 
         espDataBuffer.push(data);
         res.status(200).send({ message: 'Data accepted and queued.' });
       } catch (error) {
+        console.error("Error in /api/esp32p:", error.message);
         res.status(400).send({ message: 'Invalid data format' });
       }
     });
+
 
     // ESP32 থেকে ডেটা পড়া (GET) - সব ডেটা
     app.get('/api/esp32', async (req, res) => {
@@ -492,6 +476,7 @@ async function run() {
               const copy = { ...doc };
               if (copy._id) copy._id = copy._id.toString();
               if (copy.timestamp) copy.timestamp = copy.timestamp.toISOString();
+              if (copy.receivedAt) copy.receivedAt = copy.receivedAt.toISOString();
               if (!first) out.write(',\n');
               out.write(JSON.stringify(copy));
               first = false;
@@ -645,7 +630,6 @@ async function run() {
       try {
         // _id বাদে সব ডিভাইসের তথ্য পাঠানো
         const devices = await devicesCollection.find({})
-          // [পরিবর্তন] data: 1 যোগ করা হয়েছে
           .project({ _id: 0, uid: 1, name: 1, location: 1, status: 1, lastSeen: 1, addedAt: 1, data: 1 })
           .toArray();
           
@@ -710,8 +694,14 @@ async function run() {
         const found = await devicesCollection.find({ uid: { $in: uDevices } }).toArray();
         const result = uDevices.map((uid) => {
           const d = found.find((x) => x.uid === uid);
-          // [পরিবর্তন] data: d?.data || null যোগ করা হয়েছে
-          return { uid, name: d?.name, location: d?.location, status: d ? d.status || 'offline' : 'offline', lastSeen: d ? d.lastSeen : null, data: d?.data || null };
+          return { 
+            uid, 
+            name: d?.name, 
+            location: d?.location, 
+            status: d ? d.status || 'offline' : 'offline', 
+            lastSeen: d ? d.lastSeen : null,
+            data: d ? d.data : {} // সর্বশেষ ডেটা যোগ করা
+          };
         });
 
         return res.send(result);
@@ -735,19 +725,57 @@ async function run() {
           return res.status(403).send({ success: false, message: 'Forbidden: device not assigned to user' });
         }
 
-        const { start, end } = req.query || {};
-        const startDate = start ? new Date(start) : new Date(0);
-        const endDate = end ? new Date(end) : new Date();
-        endDate.setHours(23, 59, 59, 999);
+        const { start, end, limit } = req.query || {};
+        const lim = Math.min(5000, Math.max(1, parseInt(limit, 10) || 500));
+        let startDate, endDate;
+
+        if (start && end) {
+          startDate = new Date(start);
+          endDate = new Date(end);
+          endDate.setHours(23, 59, 59, 999);
+        } else {
+          // ডিফল্ট: শেষ ২৪ ঘণ্টা
+          endDate = new Date();
+          startDate = new Date(endDate.getTime() - (24 * 60 * 60 * 1000));
+        }
 
         const query = { uid, timestamp: { $gte: startDate, $lte: endDate } };
         const docs = await EspCollection.find(query)
+          .sort({ timestamp: -1 }) // চার্টের জন্য সর্বশেষ ডেটা আগে
+          .limit(lim)
           .project({ temperature: 1, water_level: 1, rainfall: 1, timestamp: 1, _id: 0 })
           .toArray();
 
-        return res.send(docs);
+        return res.send(docs.reverse()); // চার্টে সঠিক অর্ডারের জন্য reverse()
       } catch (error) {
         console.error('Error in /api/user/device/:uid/data:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+
+    // GET /api/user/profile (protected)
+    // ইউজারের প্রোফাইল তথ্য
+    app.get('/api/user/profile', authenticateJWT, async (req, res) => {
+      try {
+        const userId = req.user && req.user.userId;
+        if (!userId) return res.status(401).send({ success: false, message: 'Unauthorized' });
+
+        const user = await usersCollection.findOne(
+          { _id: new ObjectId(userId) },
+          { projection: { passwordHash: 0 } } // পাসওয়ার্ড হ্যাশ বাদ দিয়ে
+        );
+
+        if (!user) {
+          return res.status(404).send({ success: false, message: 'User not found' });
+        }
+
+        // ইউজার অ্যাডমিন কিনা তা চেক করা (ডাবল চেক)
+        const isAdminEnv = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL;
+        user.isAdmin = (user.isAdmin === true || isAdminEnv);
+        
+        res.send(user);
+      } catch (error) {
+        console.error('Error in /api/user/profile:', error);
         return res.status(500).send({ success: false, message: 'Internal server error' });
       }
     });
@@ -895,60 +923,6 @@ async function run() {
       }
     });
 
-    // --- [নতুন রুট] ---
-    // GET /api/user/profile (protected)
-    // লগইন করা ইউজারের প্রোফাইল তথ্য দেখানোর জন্য
-    app.get('/api/user/profile', authenticateJWT, async (req, res) => {
-      try {
-        const userId = req.user && req.user.userId;
-        if (!userId) return res.status(401).send({ success: false, message: 'Unauthorized' });
-
-        const user = await usersCollection.findOne(
-          { _id: new ObjectId(userId) },
-          { projection: { passwordHash: 0 } } // <-- নিরাপত্তা: পাসওয়ার্ড হ্যাশ বাদ দিয়ে
-        );
-
-        if (!user) {
-          return res.status(404).send({ success: false, message: 'User not found' });
-        }
-        
-        // অ্যাডমিন স্ট্যাটাস চেক করে পাঠানো
-        const isAdminEnv = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL;
-        user.isAdmin = user.isAdmin === true || isAdminEnv;
-
-        res.send(user);
-
-      } catch (error) {
-        console.error('Error in /api/user/profile:', error);
-        return res.status(500).send({ success: false, message: 'Internal server error' });
-      }
-    });
-    // --- [নতুন রুট শেষ] ---
-
-
-    // GET /api/user/device/:uid/data (protected)
-    // ইউজারের নির্দিষ্ট ডিভাইসের ডেটা
-    // GET /api/admin/users
-    // সব ইউজারদের তালিকা (অ্যাডমিন রুট)
-    app.get('/api/admin/users', authenticateJWT, async (req, res) => {
-      const check = await ensureAdmin(req, res);
-      if (!check || check.ok !== true) return; // অ্যাডমিন কিনা চেক করা
-
-      try {
-        const users = await usersCollection.find({})
-          .project({ passwordHash: 0 }) // <-- নিরাপত্তা জনিত কারণে পাসওয়ার্ড হ্যাশ বাদ দিয়ে পাঠানো
-          .toArray();
-        
-        res.send(users);
-
-      } catch (error) {
-        console.error('Error in /api/admin/users:', error);
-        return res.status(500).send({ success: false, message: 'Internal server error' });
-      }
-    });
-    // --- [নতুন রুট শেষ] ---
-
-
     // GET /api/admin/stats
     // অ্যাডমিন ড্যাশবোর্ডের জন্য পরিসংখ্যান
     app.get('/api/admin/stats', authenticateJWT, async (req, res) => {
@@ -971,77 +945,26 @@ async function run() {
       }
     });
 
-    // GET /api/device/status - summary of devices (legacy, replaced by stats)
-    app.get('/api/device/status', async (req, res) => {
+    // GET /api/admin/users
+    // সমস্ত ইউজারদের তালিকা (অ্যাডমিন রুট)
+    app.get('/api/admin/users', authenticateJWT, async (req, res) => {
+      const check = await ensureAdmin(req, res);
+      if (!check || check.ok !== true) return;
+
       try {
-        const total = await devicesCollection.countDocuments();
-        const online = await devicesCollection.countDocuments({ status: 'online' });
-        const offline = total - online;
-        return res.send({ total, online, offline });
+        const users = await usersCollection.find({})
+          .project({ passwordHash: 0 }) // পাসওয়ার্ড হ্যাশ বাদ দিয়ে
+          .toArray();
+        res.send(users);
       } catch (error) {
-        console.error('Error in /api/device/status:', error);
-        return res.status(500).send({ message: 'Internal server error' });
+        console.error('Error in /api/admin/users:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
       }
     });
-
 
     // --- Legacy/Other Routes ---
+    // এই সেকশনটি ক্লিনআপ করা হয়েছে
 
-    app.get('/api/accounts/:id', async (req, res) => {
-      try {
-        const id = req.params.id;
-        const query = { _id: new ObjectId(id) };
-        const booking = await EspCollection.findOne(query);
-        res.send(booking);
-      } catch (e) {
-        res.status(400).send({ message: 'Invalid ID format' });
-      }
-    });
-
-    app.get('/api/accounts', async (req, res) => {
-      const query = {};
-      const cursor = EspCollection.find(query);
-      const accounts = await cursor.toArray();
-      res.send(accounts);
-    });
-
-    app.get('/api/wholesale', async (req, res) => {
-      const query = {};
-      const cursor = wholesaleCollection.find(query);
-      const accounts = await cursor.toArray();
-      res.send(accounts);
-    });
-
-    app.get('/api/lotary', async (req, res) => {
-      const query = {};
-      const cursor = lotary.find(query);
-      const Lotary = await cursor.toArray();
-      res.send(Lotary);
-    });
-
-    app.post('/api/lotary', async (req, res) => {
-      const nextcort = req.body;
-      const result = await lotary.insertOne(nextcort);
-      res.send(result);
-    });
-
-    // তারিখ ভিত্তিক রিপোর্ট
-    app.get('/api/accountsreportbydate', async (req, res) => {
-      try {
-        const { sdate, edate } = req.query;
-        const startDate = new Date(sdate);
-        const endDate = new Date(edate);
-        endDate.setHours(23, 59, 59, 999); 
-        const query = {
-          timestamp: { $gte: startDate, $lte: endDate }
-        };
-        const filterdate = await EspCollection.find(query).toArray();
-        res.send(filterdate);
-      } catch (error) {
-        console.error("Error in date report:", error);
-        res.status(500).send({ message: 'Error fetching report' });
-      }
-    });
 
   } finally {
     // প্রোডাকশন সার্ভারে ক্লায়েন্ট বন্ধ করা উচিত নয়
