@@ -278,10 +278,10 @@ async function run() {
     await client.connect();
     console.log('DB connected');
 
-    const db = client.db('Esp32data');
+    const db = client.db('Esp32data9');
 
     // --- কালেকশন ডিফাইন করা ---
-    const EspCollection = db.collection('espdata2'); 
+    const EspCollection = db.collection('espdata29'); 
     const devicesCollection = db.collection('devices'); // ডিভাইস স্ট্যাটাস এবং তথ্যের জন্য
     const usersCollection = db.collection('users'); // ইউজার অথেন্টিকেশন
 
