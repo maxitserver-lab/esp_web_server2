@@ -387,7 +387,7 @@ async function run() {
     app.get('/api/device/data', async (req, res) => {
       try {
         const { uid, limit } = req.query || {};
-        const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 300));
+        const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 600));
         const q = {};
         if (uid) q.uid = String(uid);
 
