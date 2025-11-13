@@ -777,9 +777,9 @@ async function run() {
         return res.status(500).send({ success: false, message: 'Internal server error' });
       }
     });
-
-    // GET /api/user/profile2 (protected) - [NEW DUPLICATE ROUTE]
-    // ইউজারের প্রোফাইল তথ্য
+    
+    // GET /api/user/profile2 (protected)
+    // ইউজারের প্রোফাইল তথ্য (টেস্ট রুট)
     app.get('/api/user/profile2', authenticateJWT, async (req, res) => {
       try {
         const userId = req.user && req.user.userId;
@@ -798,12 +798,14 @@ async function run() {
         const isAdminEnv = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL;
         user.isAdmin = (user.isAdmin === true || isAdminEnv);
         
-        res.send(user);
+        // শুধু একটি ভিন্ন বার্তা যোগ করা হলো
+        res.send({ message: "Profile from route /api/user/profile2", ...user });
       } catch (error) {
         console.error('Error in /api/user/profile2:', error);
         return res.status(500).send({ success: false, message: 'Internal server error' });
       }
     });
+
 
     // --- Admin-Protected Routes ---
 
@@ -894,7 +896,6 @@ async function run() {
     app.get('/api/admin/report', authenticateJWT, async (req, res) => {
       const check = await ensureAdmin(req, res);
       if (!check || check.ok !== true) return;
-      
       try {
         const { period = 'monthly', year } = req.query || {};
         const match = {};
@@ -942,7 +943,83 @@ async function run() {
         const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
         const result = raw.map(r => ({ month: monthNames[r._id.month - 1], year: r._id.year, avgTemp: Number(r.avgTemp.toFixed(2)), avgRain: Number(r.avgRain.toFixed(2)), count: r.count }));
         return res.send(result);
-    // ... (লাইন 1083 এর আশেপাশে, /api/v1/user/data/:id রুটের পরে) ...
+      } catch (error) {
+        console.error('Error in /api/admin/report:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+
+    // GET /api/admin/stats
+    // অ্যাডমিন ড্যাশবোর্ডের জন্য পরিসংখ্যান
+    app.get('/api/admin/stats', authenticateJWT, async (req, res) => {
+      const check = await ensureAdmin(req, res);
+      if (!check || check.ok !== true) return;
+
+      try {
+        const totalDevices = await devicesCollection.countDocuments();
+        const onlineDevices = await devicesCollection.countDocuments({ status: 'online' });
+        const offlineDevices = totalDevices - onlineDevices;
+        const totalDataPoints = await EspCollection.countDocuments();
+        const todayStart = new Date();
+        todayStart.setHours(0,0,0,0);
+        const dataToday = await EspCollection.countDocuments({ timestamp: { $gte: todayStart } });
+
+        return res.send({ totalDevices, onlineDevices, offlineDevices, totalDataPoints, dataToday });
+      } catch (error) {
+        console.error('Error in /api/admin/stats:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+
+    // GET /api/admin/users
+    // সমস্ত ইউজারদের তালিকা (অ্যাডমিন রুট)
+    app.get('/api/admin/users', authenticateJWT, async (req, res) => {
+      const check = await ensureAdmin(req, res);
+      if (!check || check.ok !== true) return;
+
+      try {
+        const users = await usersCollection.find({})
+          .project({ passwordHash: 0 }) // পাসওয়ার্ড হ্যাশ বাদ দিয়ে
+          .toArray();
+        res.send(users);
+      } catch (error) {
+        console.error('Error in /api/admin/users:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+
+    // GET /api/v1/user/data/:id (অ্যাডমিন রুট)
+    // নির্দিষ্ট ইউজারের তথ্য
+    app.get('/api/v1/user/data/:id', authenticateJWT, async (req, res) => {
+      const check = await ensureAdmin(req, res);
+      if (!check || check.ok !== true) return;
+
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ success: false, message: 'Invalid user ID format' });
+        }
+        
+        const user = await usersCollection.findOne(
+          { _id: new ObjectId(id) },
+          { projection: { passwordHash: 0 } }
+        );
+
+        if (!user) {
+          return res.status(404).send({ success: false, message: 'User not found' });
+        }
+        
+        // অ্যাডমিন স্ট্যাটাস যোগ করা
+        const isAdminEnv = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL;
+        user.isAdmin = (user.isAdmin === true || isAdminEnv);
+
+        res.send(user);
+
+      } catch (error) {
+        console.error('Error in /api/v1/user/data/:id:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
 
     // POST /api/admin/user/make-admin
     // একজন ইউজারকে অ্যাডমিন বানানো (অ্যাডমিন রুট)
