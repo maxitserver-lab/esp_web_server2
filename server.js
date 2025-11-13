@@ -942,75 +942,75 @@ async function run() {
         const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
         const result = raw.map(r => ({ month: monthNames[r._id.month - 1], year: r._id.year, avgTemp: Number(r.avgTemp.toFixed(2)), avgRain: Number(r.avgRain.toFixed(2)), count: r.count }));
         return res.send(result);
-      } catch (error) {
-        console.error('Error in /api/admin/report:', error);
-        return res.status(500).send({ success: false, message: 'Internal server error' });
-      }
-    });
+    // ... (লাইন 1083 এর আশেপাশে, /api/v1/user/data/:id রুটের পরে) ...
 
-    // GET /api/admin/stats
-    // অ্যাডমিন ড্যাশবোর্ডের জন্য পরিসংখ্যান
-    app.get('/api/admin/stats', authenticateJWT, async (req, res) => {
+    // POST /api/admin/user/make-admin
+    // একজন ইউজারকে অ্যাডমিন বানানো (অ্যাডমিন রুট)
+    app.post('/api/admin/user/make-admin', authenticateJWT, async (req, res) => {
       const check = await ensureAdmin(req, res);
       if (!check || check.ok !== true) return;
 
       try {
-        const totalDevices = await devicesCollection.countDocuments();
-        const onlineDevices = await devicesCollection.countDocuments({ status: 'online' });
-        const offlineDevices = totalDevices - onlineDevices;
-        const totalDataPoints = await EspCollection.countDocuments();
-        const todayStart = new Date();
-        todayStart.setHours(0,0,0,0);
-        const dataToday = await EspCollection.countDocuments({ timestamp: { $gte: todayStart } });
-
-        return res.send({ totalDevices, onlineDevices, offlineDevices, totalDataPoints, dataToday });
-      } catch (error) {
-        console.error('Error in /api/admin/stats:', error);
-        return res.status(500).send({ success: false, message: 'Internal server error' });
-      }
-    });
-
-    // GET /api/admin/users
-    // সমস্ত ইউজারদের তালিকা (অ্যাডমিন রুট)
-    app.get('/api/admin/users', authenticateJWT, async (req, res) => {
-      const check = await ensureAdmin(req, res);
-      if (!check || check.ok !== true) return;
-
-      try {
-        const users = await usersCollection.find({})
-          .project({ passwordHash: 0 }) // পাসওয়ার্ড হ্যাশ বাদ দিয়ে
-          .toArray();
-        res.send(users);
-      } catch (error) {
-        console.error('Error in /api/admin/users:', error);
-        return res.status(500).send({ success: false, message: 'Internal server error' });
-      }
-    });
-
-    // GET /api/v1/user/data/:id
-    // একটি নির্দিষ্ট ইউজারের তথ্য (অ্যাডমিন রুট)
-    app.get('/api/v1/user/data/:id', authenticateJWT, async (req, res) => {
-      const check = await ensureAdmin(req, res);
-      if (!check || check.ok !== true) return;
-
-      try {
-        const { id } = req.params;
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).send({ success: false, message: 'Invalid user ID format' });
+        const { email } = req.body;
+        if (!email) {
+          return res.status(400).send({ success: false, message: 'Email is required' });
         }
-        
-        const user = await usersCollection.findOne(
-          { _id: new ObjectId(id) },
-          { projection: { passwordHash: 0 } } // পাসওয়ার্ড হ্যাশ বাদ দিয়ে
+
+        const normalizedEmail = String(email).trim().toLowerCase();
+        const result = await usersCollection.updateOne(
+          { email: normalizedEmail },
+          { $set: { isAdmin: true } }
         );
 
-        if (!user) {
+        if (result.matchedCount === 0) {
           return res.status(404).send({ success: false, message: 'User not found' });
         }
-        
-        res.send(user);
+
+        res.send({ success: true, message: `User ${normalizedEmail} has been made an admin.` });
+
       } catch (error) {
-        console.error('Error in /api/v1/user/data/:id:', error);
+        console.error('Error in /api/admin/user/make-admin:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+
+    // POST /api/admin/user/remove-admin
+    // একজন ইউজারের অ্যাডমিন স্ট্যাটাস বাতিল করা (অ্যাডমিন রুট)
+    app.post('/api/admin/user/remove-admin', authenticateJWT, async (req, res) => {
+      const check = await ensureAdmin(req, res);
+      if (!check || check.ok !== true) return;
+
+      try {
+        const { email } = req.body;
+        if (!email) {
+          return res.status(400).send({ success: false, message: 'Email is required' });
+        }
+
+        const normalizedEmail = String(email).trim().toLowerCase();
+
+        // .env ফাইলে থাকা সুপার অ্যাডমিনকে রিমুভ করা যাবে না
+        if (process.env.ADMIN_EMAIL && normalizedEmail === process.env.ADMIN_EMAIL) {
+          return res.status(403).send({ success: false, message: 'Cannot remove the primary admin.' });
+        }
+
+        // একজন অ্যাডমিন নিজেকে রিমুভ করতে পারবে না
+        if (check.user.email === normalizedEmail) {
+          return res.status(403).send({ success: false, message: 'Admin cannot remove themselves.' });
+        }
+
+        const result = await usersCollection.updateOne(
+          { email: normalizedEmail },
+          { $set: { isAdmin: false } } // অথবা $unset: { isAdmin: 1 }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ success: false, message: 'User not found' });
+        }
+
+        res.send({ success: true, message: `User ${normalizedEmail}'s admin privileges have been revoked.` });
+
+      } catch (error) {
+        console.error('Error in /api/admin/user/remove-admin:', error);
         return res.status(500).send({ success: false, message: 'Internal server error' });
       }
     });
