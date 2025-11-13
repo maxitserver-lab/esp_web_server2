@@ -778,6 +778,33 @@ async function run() {
       }
     });
 
+    // GET /api/user/profile2 (protected) - [NEW DUPLICATE ROUTE]
+    // ইউজারের প্রোফাইল তথ্য
+    app.get('/api/user/profile2', authenticateJWT, async (req, res) => {
+      try {
+        const userId = req.user && req.user.userId;
+        if (!userId) return res.status(401).send({ success: false, message: 'Unauthorized' });
+
+        const user = await usersCollection.findOne(
+          { _id: new ObjectId(userId) },
+          { projection: { passwordHash: 0 } } // পাসওয়ার্ড হ্যাশ বাদ দিয়ে
+        );
+
+        if (!user) {
+          return res.status(404).send({ success: false, message: 'User not found' });
+        }
+
+        // ইউজার অ্যাডমিন কিনা তা চেক করা (ডাবল চেক)
+        const isAdminEnv = process.env.ADMIN_EMAIL && user.email === process.env.ADMIN_EMAIL;
+        user.isAdmin = (user.isAdmin === true || isAdminEnv);
+        
+        res.send(user);
+      } catch (error) {
+        console.error('Error in /api/user/profile2:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+
     // --- Admin-Protected Routes ---
 
     // POST /api/filter/device (অ্যাডমিন রুট)
