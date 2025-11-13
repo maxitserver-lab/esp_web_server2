@@ -56,8 +56,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// --- ফাইল আপলোড (Multer) - সরানো হয়েছে কারণ এটি ব্যবহৃত হচ্ছিল না ---
-
 // --- MongoDB কানেকশন ---
 const uri = process.env.MONGODB_URI; // .env ফাইল থেকে URI লোড করা
 if (!uri) {
@@ -387,7 +385,7 @@ async function run() {
     app.get('/api/device/data', async (req, res) => {
       try {
         const { uid, limit } = req.query || {};
-        const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 600));
+        const lim = Math.min(1000, Math.max(1, parseInt(limit, 10) || 300));
         const q = {};
         if (uid) q.uid = String(uid);
 
@@ -869,7 +867,7 @@ async function run() {
     app.get('/api/admin/report', authenticateJWT, async (req, res) => {
       const check = await ensureAdmin(req, res);
       if (!check || check.ok !== true) return;
-      // ... (এই রুটের দীর্ঘ কোডটি এখানে কপি করা হলো) ...
+      
       try {
         const { period = 'monthly', year } = req.query || {};
         const match = {};
@@ -962,8 +960,33 @@ async function run() {
       }
     });
 
-    // --- Legacy/Other Routes ---
-    // এই সেকশনটি ক্লিনআপ করা হয়েছে
+    // GET /api/v1/user/data/:id
+    // একটি নির্দিষ্ট ইউজারের তথ্য (অ্যাডমিন রুট)
+    app.get('/api/v1/user/data/:id', authenticateJWT, async (req, res) => {
+      const check = await ensureAdmin(req, res);
+      if (!check || check.ok !== true) return;
+
+      try {
+        const { id } = req.params;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ success: false, message: 'Invalid user ID format' });
+        }
+        
+        const user = await usersCollection.findOne(
+          { _id: new ObjectId(id) },
+          { projection: { passwordHash: 0 } } // পাসওয়ার্ড হ্যাশ বাদ দিয়ে
+        );
+
+        if (!user) {
+          return res.status(404).send({ success: false, message: 'User not found' });
+        }
+        
+        res.send(user);
+      } catch (error) {
+        console.error('Error in /api/v1/user/data/:id:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
 
 
   } finally {
