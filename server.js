@@ -12,6 +12,8 @@ const { Server } = require('socket.io');
 const { MongoClient, ObjectId } = require('mongodb');
 const helmet = require('helmet'); // HTTP হেডার সুরক্ষিত করার জন্য
 const compression = require('compression'); // রেসপন্স Gzip করার জন্য
+const nodemailer = require('nodemailer'); // ইমেইল পাঠানোর জন্য
+const crypto = require('crypto'); // র্যান্ডম পাসওয়ার্ড তৈরির জন্য
 require('dotenv').config(); // .env ফাইল থেকে গোপন তথ্য লোড করার জন্য
 
 // --- গ্লোবাল ভেরিয়েবল ---
@@ -29,6 +31,31 @@ const app = express();
 const port = process.env.PORT || 3002;
 const http_server = http.createServer(app); // socket.io এর জন্য http সার্ভার
 const io = new Server(http_server);
+
+// --- Nodemailer Transport (ইমেইল পাঠানোর সেটআপ) ---
+let mailTransporter;
+if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+  mailTransporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.EMAIL_PORT || '587', 10),
+    secure: process.env.EMAIL_SECURE === 'true', // true for 465, false for other ports
+    auth: {
+      user: process.env.EMAIL_USER, // .env থেকে আপনার ইমেইল
+      pass: process.env.EMAIL_PASS, // .env থেকে আপনার অ্যাপ পাসওয়ার্ড
+    },
+  });
+  
+  mailTransporter.verify((error, success) => {
+    if (error) {
+      console.warn('[Nodemailer Error] ইমেইল কনফিগারেশন সঠিক নয়। "Forgot Password" কাজ করবে না:', error.message);
+    } else {
+      console.log('[Nodemailer Success] ইমেইল সার্ভার প্রস্তুত। "Forgot Password" কাজ করবে।');
+    }
+  });
+} else {
+  console.warn('[Nodemailer Info] EMAIL_USER বা EMAIL_PASS .env ফাইলে সেট করা নেই। "Forgot Password" কাজ করবে না।');
+}
+
 
 // --- Simple JWT auth middleware ---
 function authenticateJWT(req, res, next) {
@@ -155,7 +182,6 @@ async function flushDataBuffer(collection, devicesCollection) {
  * [স্লো সিঙ্ক - ফলব্যাক]
  * EspCollection থেকে সব ইউনিক UID খুঁজে বের করে
  * devicesCollection-এ সেভ করে।
- * এটি একটি ব্যয়বহুল অপারেশন, তাই ঘন ঘন চালানো উচিত নয়।
  */
 async function syncAllDevices(EspCollection, devicesCollection) {
   try {
@@ -284,7 +310,6 @@ async function run() {
     const usersCollection = db.collection('users'); // ইউজার অথেন্টিকেশন
 
     // --- ইনডেক্সিং (সুপারিশ) ---
-    // সেরা পারফরম্যান্সের জন্য এটি mongosh-এ একবার চালানো উচিত
     // db.espdata2.createIndex({ uid: 1, timestamp: -1 })
     // db.devices.createIndex({ uid: 1 }, { unique: true })
     // db.users.createIndex({ email: 1 }, { unique: true })
@@ -589,7 +614,9 @@ async function run() {
           email: normalizedEmail,
           passwordHash,
           devices: [],
-          createdAt: new Date()
+          createdAt: new Date(),
+          address: null, // নতুন ফিল্ড
+          mobile: null   // নতুন ফিল্ড
         };
         await usersCollection.insertOne(newUser);
         return res.send({ success: true, message: 'User registered successfully' });
@@ -619,6 +646,56 @@ async function run() {
         return res.status(500).send({ success: false, message: 'Internal server error' });
       }
     });
+
+    // POST /api/user/password/forgot (Public)
+    // পাসওয়ার্ড ভুলে গেলে ইমেইলে নতুন পাসওয়ার্ড পাঠানো
+    app.post('/api/user/password/forgot', async (req, res) => {
+      if (!mailTransporter) {
+        return res.status(500).send({ success: false, message: 'Email service is not configured on this server.' });
+      }
+
+      try {
+        const { email } = req.body;
+        if (!email) {
+          return res.status(400).send({ success: false, message: 'Email is required.' });
+        }
+        
+        const normalizedEmail = String(email).trim().toLowerCase();
+        const user = await usersCollection.findOne({ email: normalizedEmail });
+
+        if (!user) {
+          // ইউজার না থাকলেও, নিরাপত্তার জন্য "ইমেইল পাঠানো হয়েছে" দেখানো
+          return res.send({ success: true, message: 'If an account with this email exists, a new password has been sent.' });
+        }
+
+        // নতুন র্যান্ডম পাসওয়ার্ড তৈরি
+        const newPassword = crypto.randomBytes(6).toString('hex'); // 12-character password
+        const passwordHash = await bcrypt.hash(newPassword, 10);
+
+        // ডাটাবেসে নতুন পাসওয়ার্ড হ্যাশ সেভ করা
+        await usersCollection.updateOne(
+          { _id: user._id },
+          { $set: { passwordHash: passwordHash } }
+        );
+
+        // ইউজারকে ইমেইল পাঠানো
+        await mailTransporter.sendMail({
+          from: `"ESP App Admin" <${process.env.EMAIL_USER}>`,
+          to: user.email,
+          subject: 'Your New Password for ESP App',
+          text: `Hello ${user.name},\n\nYour password has been reset. Your new temporary password is: ${newPassword}\n\nPlease login immediately and change this password.\n\nThank you,\nESP App Team`,
+          html: `<p>Hello ${user.name},</p><p>Your password has been reset. Your new temporary password is: <b>${newPassword}</b></p><p>Please login immediately and change this password.</p><p>Thank you,<br>ESP App Team</p>`,
+        });
+
+        res.send({ success: true, message: 'If an account with this email exists, a new password has been sent.' });
+
+      } catch (error) {
+        console.error('Error in /api/user/password/forgot:', error);
+        // ইউজারকে বিস্তারিত এরর না দেখিয়ে জেনেরিক মেসেজ পাঠানো
+        res.status(500).send({ success: false, message: 'An error occurred while trying to reset the password.' });
+      }
+    });
+
 
     // --- User-Protected Routes ---
 
@@ -802,6 +879,80 @@ async function run() {
         res.send({ message: "Profile from route /api/user/profile2", ...user });
       } catch (error) {
         console.error('Error in /api/user/profile2:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+
+    // POST /api/user/profile/update (protected)
+    // ইউজারের প্রোফাইল (নাম, ঠিকানা, মোবাইল) আপডেট করা
+    app.post('/api/user/profile/update', authenticateJWT, async (req, res) => {
+      try {
+        const userId = req.user && req.user.userId;
+        if (!userId) return res.status(401).send({ success: false, message: 'Unauthorized' });
+
+        const { name, address, mobile } = req.body;
+        const fieldsToUpdate = {};
+
+        // ইউজার শুধু সেই ফিল্ড পাঠাবে যা সে আপডেট করতে চায়
+        if (name !== undefined) fieldsToUpdate.name = String(name).trim();
+        if (address !== undefined) fieldsToUpdate.address = String(address).trim();
+        if (mobile !== undefined) fieldsToUpdate.mobile = String(mobile).trim();
+
+        if (Object.keys(fieldsToUpdate).length === 0) {
+          return res.status(400).send({ success: false, message: 'No fields to update.' });
+        }
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: fieldsToUpdate }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ success: false, message: 'User not found' });
+        }
+
+        res.send({ success: true, message: 'Profile updated successfully.' });
+
+      } catch (error) {
+        console.error('Error in /api/user/profile/update:', error);
+        return res.status(500).send({ success: false, message: 'Internal server error' });
+      }
+    });
+
+    // POST /api/user/password/change (protected)
+    // ইউজারের পাসওয়ার্ড পরিবর্তন করা
+    app.post('/api/user/password/change', authenticateJWT, async (req, res) => {
+      try {
+        const userId = req.user && req.user.userId;
+        if (!userId) return res.status(401).send({ success: false, message: 'Unauthorized' });
+
+        const { oldPassword, newPassword } = req.body;
+        if (!oldPassword || !newPassword) {
+          return res.status(400).send({ success: false, message: 'Old password and new password are required.' });
+        }
+
+        const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
+        if (!user) {
+          return res.status(404).send({ success: false, message: 'User not found' });
+        }
+
+        // পুরনো পাসওয়ার্ড চেক করা
+        const isMatch = await bcrypt.compare(String(oldPassword), user.passwordHash);
+        if (!isMatch) {
+          return res.status(401).send({ success: false, message: 'Invalid old password.' });
+        }
+
+        // নতুন পাসওয়ার্ড হ্যাশ করে সেভ করা
+        const newPasswordHash = await bcrypt.hash(String(newPassword), 10);
+        await usersCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          { $set: { passwordHash: newPasswordHash } }
+        );
+
+        res.send({ success: true, message: 'Password changed successfully.' });
+
+      } catch (error) {
+        console.error('Error in /api/user/password/change:', error);
         return res.status(500).send({ success: false, message: 'Internal server error' });
       }
     });
